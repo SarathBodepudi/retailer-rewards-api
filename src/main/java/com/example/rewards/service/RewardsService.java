@@ -8,12 +8,11 @@ import com.example.rewards.repository.TransactionRepository;
 
 import java.time.YearMonth;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import org.springframework.stereotype.Service;
 
@@ -33,24 +32,42 @@ public class RewardsService {
         YearMonth endMonth = startMonth.plusMonths(2);
         LocalDate startDate = startMonth.atDay(1);
         LocalDate endDateExclusive = startMonth.plusMonths(3).atDay(1);
-        Map<String, Map<YearMonth, Long>> grouped = repository.findByPurchaseDateGreaterThanEqualAndPurchaseDateLessThan(startDate, endDateExclusive).stream()
-            .filter(tx -> !YearMonth.from(tx.getPurchaseDate())
-                .isBefore(startMonth) && !YearMonth.from(tx.getPurchaseDate())
-                .isAfter(endMonth))
-                .collect(Collectors.groupingBy(Transaction::getCustomerId, TreeMap::new,
-                    Collectors.groupingBy(tx -> YearMonth.from(tx.getPurchaseDate()), TreeMap::new,
-                    Collectors.reducing(0L, tx -> calculator.calculate(tx.getAmount()), Math::addExact))));
 
-        List<CustomerRewards> customers = grouped.entrySet().stream().map(entry -> {
-            List<MonthlyRewards> months =
-                    IntStream.range(0, 3).mapToObj(offset -> {
-                        YearMonth month = startMonth.plusMonths(offset);
-                return new MonthlyRewards(month, entry.getValue().getOrDefault(month, 0L));
-            }).collect(Collectors.toList());
-            long total = months.stream().mapToLong(MonthlyRewards::getPoints).reduce(0L, Math::addExact);
-            return new CustomerRewards(entry.getKey(), months, total);
-        }).collect(Collectors.toList());
+        List<Transaction> transactions = repository
+                .findByPurchaseDateGreaterThanEqualAndPurchaseDateLessThan(startDate, endDateExclusive);
+
+        Map<String, Map<YearMonth, Long>> grouped = groupPointsByCustomerAndMonth(transactions, startMonth, endMonth);
+
+        List<CustomerRewards> customers = buildCustomerRewards(grouped, startMonth);
+
         return new RewardsReport(startMonth, endMonth, customers);
+    }
+
+    private Map<String, Map<YearMonth, Long>> groupPointsByCustomerAndMonth(List<Transaction> transactions, YearMonth startMonth, YearMonth endMonth) {
+        Map<String, Map<YearMonth, Long>> grouped = new TreeMap<>();
+        for (Transaction tx : transactions) {
+            YearMonth month = YearMonth.from(tx.getPurchaseDate());
+            if (month.isBefore(startMonth) || month.isAfter(endMonth)) continue;
+            long points = calculator.calculate(tx.getAmount());
+            grouped.computeIfAbsent(tx.getCustomerId(), k -> new TreeMap<>()).merge(month, points, Math::addExact);
+        }
+        return grouped;
+    }
+
+    private List<CustomerRewards> buildCustomerRewards(Map<String, Map<YearMonth, Long>> grouped, YearMonth startMonth) {
+        List<CustomerRewards> customers = new ArrayList<>();
+        for (Map.Entry<String, Map<YearMonth, Long>> entry : grouped.entrySet()) {
+            List<MonthlyRewards> months = new ArrayList<>(3);
+            long total = 0L;
+            for (int offset = 0; offset < 3; offset++) {
+                YearMonth m = startMonth.plusMonths(offset);
+                long pts = entry.getValue().getOrDefault(m, 0L);
+                months.add(new MonthlyRewards(m, pts));
+                total = Math.addExact(total, pts);
+            }
+            customers.add(new CustomerRewards(entry.getKey(), months, total));
+        }
+        return customers;
     }
 
     public Optional<CustomerRewards> customerReport(YearMonth startMonth, String customerId) {
