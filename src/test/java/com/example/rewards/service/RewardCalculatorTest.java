@@ -1,7 +1,9 @@
 package com.example.rewards.service;
 
 import static org.junit.jupiter.api.Assertions.*;
+
 import java.math.BigDecimal;
+
 import org.junit.jupiter.api.Test;
 
 class RewardCalculatorTest {
@@ -25,5 +27,7 @@ class RewardCalculatorTest {
         assertThrows(IllegalArgumentException.class, () -> points("-1"));
     }
 
-    private long points(String amount) { return calculator.calculate(new BigDecimal(amount)); }
+    private long points(String amount) {
+        return calculator.calculate(new BigDecimal(amount));
+    }
 }
